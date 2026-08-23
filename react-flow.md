@@ -761,3 +761,5 @@ import '@xyflow/react/dist/style.css';
 - `useHandleConnections` 已标记 deprecated，新代码使用 `useNodeConnections`。
 - React Flow Provider 内部使用 Zustand store，但业务代码优先使用公开 Hooks 和 `useReactFlow`。
 - 大量节点时可以考虑 `onlyRenderVisibleElements`、节点 memo、稳定的 `nodeTypes`/`edgeTypes` 对象以及外部状态管理。
+
+## 不管不顾啊

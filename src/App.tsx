@@ -49,9 +49,76 @@ const nodeDefaults: Record<CreativeNodeType, { title: string; description: strin
 };
 
 type AlignmentGuides = { vertical: number[]; horizontal: number[] };
+type SnapMatch = { delta: number; guide: number; distance: number };
 const NODE_WIDTH = 248;
 const NODE_HEIGHT = 150;
 const GUIDE_THRESHOLD = 8;
+
+function getNodeSize(node: CreativeNode) {
+  return {
+    width: node.measured?.width ?? node.width ?? NODE_WIDTH,
+    height: node.measured?.height ?? node.height ?? NODE_HEIGHT,
+  };
+}
+
+function computeSnap(dragged: CreativeNode, nodes: CreativeNode[]) {
+  const { width: draggedWidth, height: draggedHeight } = getNodeSize(dragged);
+  const draggedX = [
+    dragged.position.x,
+    dragged.position.x + draggedWidth / 2,
+    dragged.position.x + draggedWidth,
+  ];
+  const draggedY = [
+    dragged.position.y,
+    dragged.position.y + draggedHeight / 2,
+    dragged.position.y + draggedHeight,
+  ];
+  const vertical: number[] = [];
+  const horizontal: number[] = [];
+  let snapX: SnapMatch | undefined;
+  let snapY: SnapMatch | undefined;
+
+  nodes.forEach((node) => {
+    if (node.id === dragged.id) return;
+    const { width, height } = getNodeSize(node);
+    const nodeX = [node.position.x, node.position.x + width / 2, node.position.x + width];
+    const nodeY = [node.position.y, node.position.y + height / 2, node.position.y + height];
+
+    nodeX.forEach((targetX) => {
+      draggedX.forEach((currentX) => {
+        const distance = Math.abs(currentX - targetX);
+        if (distance <= GUIDE_THRESHOLD) {
+          vertical.push(targetX);
+          if (!snapX || distance < snapX.distance) snapX = { delta: targetX - currentX, guide: targetX, distance };
+        }
+      });
+    });
+    nodeY.forEach((targetY) => {
+      draggedY.forEach((currentY) => {
+        const distance = Math.abs(currentY - targetY);
+        if (distance <= GUIDE_THRESHOLD) {
+          horizontal.push(targetY);
+          if (!snapY || distance < snapY.distance) snapY = { delta: targetY - currentY, guide: targetY, distance };
+        }
+      });
+    });
+  });
+
+  return { snapX, snapY, vertical: [...new Set(vertical)], horizontal: [...new Set(horizontal)] };
+}
+
+function applySnap(nodes: CreativeNode[], draggedId: string, snapX?: SnapMatch, snapY?: SnapMatch) {
+  if (!snapX && !snapY) return nodes;
+  return nodes.map((node) => node.id === draggedId
+    ? {
+      ...node,
+      position: {
+        x: node.position.x + (snapX?.delta ?? 0),
+        y: node.position.y + (snapY?.delta ?? 0),
+      },
+    }
+    : node);
+}
 
 function FlowCanvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -102,69 +169,29 @@ function FlowCanvas() {
   }, [addCreativeNode, screenToFlowPosition]);
 
   const onNodeDrag: OnNodeDrag<CreativeNode> = useCallback((_, draggedNode) => {
-    const draggedWidth = draggedNode.width ?? NODE_WIDTH;
-    const draggedHeight = draggedNode.height ?? NODE_HEIGHT;
-    const draggedX = [
-      draggedNode.position.x,
-      draggedNode.position.x + draggedWidth / 2,
-      draggedNode.position.x + draggedWidth,
-    ];
-    const draggedY = [
-      draggedNode.position.y,
-      draggedNode.position.y + draggedHeight / 2,
-      draggedNode.position.y + draggedHeight,
-    ];
-    const vertical: number[] = [];
-    const horizontal: number[] = [];
-    let snapX: { delta: number; distance: number; guide: number } | undefined;
-    let snapY: { delta: number; distance: number; guide: number } | undefined;
-
-    nodes.forEach((node) => {
-      if (node.id === draggedNode.id) return;
-      const width = node.width ?? NODE_WIDTH;
-      const height = node.height ?? NODE_HEIGHT;
-      const nodeX = [node.position.x, node.position.x + width / 2, node.position.x + width];
-      const nodeY = [node.position.y, node.position.y + height / 2, node.position.y + height];
-
-      nodeX.forEach((targetX) => {
-        draggedX.forEach((currentX) => {
-          const distance = Math.abs(currentX - targetX);
-          if (distance <= GUIDE_THRESHOLD) {
-            vertical.push(targetX);
-            if (!snapX || distance < snapX.distance) snapX = { delta: targetX - currentX, distance, guide: targetX };
-          }
-        });
-      });
-      nodeY.forEach((targetY) => {
-        draggedY.forEach((currentY) => {
-          const distance = Math.abs(currentY - targetY);
-          if (distance <= GUIDE_THRESHOLD) {
-            horizontal.push(targetY);
-            if (!snapY || distance < snapY.distance) snapY = { delta: targetY - currentY, distance, guide: targetY };
-          }
-        });
-      });
-    });
+    const { snapX, snapY, vertical, horizontal } = computeSnap(draggedNode, nodes);
 
     if (snapX || snapY) {
-      setNodes((current) => current.map((node) => node.id === draggedNode.id
-        ? {
-          ...node,
-          position: {
-            x: node.position.x + (snapX?.delta ?? 0),
-            y: node.position.y + (snapY?.delta ?? 0),
-          },
-        }
-        : node));
+      setNodes((current) => applySnap(current, draggedNode.id, snapX, snapY));
     }
 
     setGuides({
-      vertical: snapX ? [snapX.guide] : [...new Set(vertical)],
-      horizontal: snapY ? [snapY.guide] : [...new Set(horizontal)],
+      vertical: snapX ? [snapX.guide] : vertical,
+      horizontal: snapY ? [snapY.guide] : horizontal,
     });
   }, [nodes, setNodes]);
 
   const clearGuides = useCallback(() => setGuides({ vertical: [], horizontal: [] }), []);
+
+  const onNodeDragStop: OnNodeDrag<CreativeNode> = useCallback((_, draggedNode) => {
+    setNodes((current) => {
+      const dragged = current.find((node) => node.id === draggedNode.id);
+      if (!dragged) return current;
+      const { snapX, snapY } = computeSnap(dragged, current);
+      return applySnap(current, dragged.id, snapX, snapY);
+    });
+    clearGuides();
+  }, [setNodes, clearGuides]);
   const onEdgeMouseEnter: EdgeMouseHandler = useCallback((_, edge) => setHoveredEdgeId(edge.id), []);
   const onEdgeMouseLeave: EdgeMouseHandler = useCallback(() => setHoveredEdgeId(null), []);
 
@@ -209,7 +236,7 @@ function FlowCanvas() {
             onEdgeMouseEnter={onEdgeMouseEnter}
             onEdgeMouseLeave={onEdgeMouseLeave}
             onNodeDrag={onNodeDrag}
-            onNodeDragStop={clearGuides}
+            onNodeDragStop={onNodeDragStop}
             onPaneClick={() => setIsMenuOpen(false)}
             onDoubleClick={onCanvasDoubleClick}
             panOnDrag
